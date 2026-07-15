@@ -340,7 +340,7 @@ function CommunityView({ index, currentName }: { index: string[]; currentName: s
           return d ? { name: n, count: d.checkins.length, wins: d.checkins[d.checkins.length - 1]?.wins } : null;
         })
       );
-      setRows(all.filter((r): r is { name: string; count: number; wins?: string } => !!r).sort((a, b) => b.count - a.count));
+      setRows(all.filter((r): r is { name: string; count: number; wins: string | undefined } => !!r).sort((a, b) => b.count - a.count));
       setLoading(false);
     })();
   }, [index]);
