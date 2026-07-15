@@ -8,8 +8,6 @@ import {
 import { TextInput, TextArea, Seal, Delta, fmtDate } from "@/components/ui";
 import { ClientData } from "@/lib/types";
 
-const COACH_CODE = "AZEN2026";
-
 async function fetchIndex(): Promise<string[]> {
   const r = await fetch("/api/index");
   const j = await r.json();
@@ -23,16 +21,41 @@ async function fetchClient(name: string): Promise<ClientData | null> {
 
 export default function CoachPage() {
   const [authed, setAuthed] = useState(false);
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.session?.role === "coach") setAuthed(true);
+      })
+      .finally(() => setChecking(false));
+  }, []);
+
+  if (checking) {
+    return <div className="min-h-screen bg-bg" />;
+  }
+
   return authed ? <CoachDashboard /> : <CoachLogin onSuccess={() => setAuthed(true)} />;
 }
 
 function CoachLogin({ onSuccess }: { onSuccess: () => void }) {
   const [code, setCode] = useState("");
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
   const router = useRouter();
 
-  const tryEnter = () => {
-    if (code === COACH_CODE) onSuccess();
+  const tryEnter = async () => {
+    if (busy) return;
+    setBusy(true);
+    setErr("");
+    const res = await fetch("/api/auth/coach-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: code }),
+    });
+    setBusy(false);
+    if (res.ok) onSuccess();
     else setErr("Incorrect code");
   };
 
@@ -49,15 +72,18 @@ function CoachLogin({ onSuccess }: { onSuccess: () => void }) {
           value={code}
           onChange={(e) => { setCode(e.target.value); setErr(""); }}
           placeholder="Access code"
+          type="password"
           onKeyDown={(e) => e.key === "Enter" && tryEnter()}
         />
         {err && <div className="font-body mt-2" style={{ color: "#B4553F", fontSize: 12 }}>{err}</div>}
-        <button onClick={tryEnter} className="font-display w-full mt-3 py-3 rounded bg-gold" style={{ color: "#12100A", fontSize: 14, letterSpacing: "0.05em" }}>
-          ENTER
+        <button
+          onClick={tryEnter}
+          disabled={busy}
+          className="font-display w-full mt-3 py-3 rounded bg-gold"
+          style={{ color: "#12100A", fontSize: 14, letterSpacing: "0.05em", opacity: busy ? 0.6 : 1 }}
+        >
+          {busy ? "..." : "ENTER"}
         </button>
-        <div className="font-body mt-4 text-center" style={{ color: "#7B7B80", fontSize: 11 }}>
-          Set your own code in the code before deploying — see the README.
-        </div>
       </div>
     </div>
   );
@@ -97,7 +123,13 @@ function CoachDashboard() {
           <div className="font-display font-bold text-off" style={{ fontSize: 20 }}>COACH DASHBOARD</div>
           <div className="font-body" style={{ color: "#7B7B80", fontSize: 12 }}>{rows.length} client{rows.length !== 1 ? "s" : ""}</div>
         </div>
-        <button onClick={() => router.push("/")} className="font-body" style={{ color: "#7B7B80", fontSize: 13 }}>Exit</button>
+        <button
+          onClick={async () => { await fetch("/api/auth/logout", { method: "POST" }); router.push("/"); }}
+          className="font-body"
+          style={{ color: "#7B7B80", fontSize: 13 }}
+        >
+          Exit
+        </button>
       </div>
       {loading ? (
         <div className="font-body" style={{ color: "#7B7B80" }}>Loading...</div>
