@@ -16,51 +16,73 @@ async function fetchIndex(): Promise<string[]> {
   const j = await r.json();
   return j.index ?? [];
 }
-async function registerClient(name: string): Promise<ClientData> {
-  const r = await fetch("/api/index", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-  const j = await r.json();
-  return j.data;
-}
 async function fetchClient(name: string): Promise<ClientData | null> {
   const r = await fetch(`/api/client/${encodeURIComponent(name)}`);
-  const j = await r.json();
-  return j.data;
-}
-async function updateClient(name: string, patch: Partial<ClientData>): Promise<ClientData> {
-  const r = await fetch(`/api/client/${encodeURIComponent(name)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
   const j = await r.json();
   return j.data;
 }
 
 export default function ClientPage() {
   const [name, setName] = useState<string | null>(null);
-  return name ? <ClientShell name={name} onExit={() => setName(null)} /> : <ClientLogin onEnter={setName} />;
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.session?.role === "client") setName(j.session.name);
+      })
+      .finally(() => setChecking(false));
+  }, []);
+
+  if (checking) {
+    return <div className="min-h-screen bg-bg" />;
+  }
+
+  return name ? (
+    <ClientShell
+      name={name}
+      onExit={async () => {
+        await fetch("/api/auth/logout", { method: "POST" });
+        setName(null);
+      }}
+    />
+  ) : (
+    <ClientLogin onEnter={setName} />
+  );
 }
 
 function ClientLogin({ onEnter }: { onEnter: (n: string) => void }) {
-  const [input, setInput] = useState("");
-  const [index, setIndex] = useState<string[]>([]);
+  const [mode, setMode] = useState<"signup" | "login">("signup");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const router = useRouter();
 
-  useEffect(() => {
-    fetchIndex().then(setIndex).catch(() => {});
-  }, []);
-
-  const go = async () => {
-    if (!input.trim() || busy) return;
+  const submit = async () => {
+    if (busy) return;
+    setErr("");
+    if (!email.trim() || !password.trim() || (mode === "signup" && !name.trim())) {
+      setErr("Please fill in all fields");
+      return;
+    }
     setBusy(true);
-    await registerClient(input.trim());
+    const res = await fetch(`/api/auth/${mode}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        mode === "signup" ? { name, email, password } : { email, password }
+      ),
+    });
+    const j = await res.json();
     setBusy(false);
-    onEnter(input.trim());
+    if (!res.ok) {
+      setErr(j.error || "Something went wrong");
+      return;
+    }
+    onEnter(j.name);
   };
 
   return (
@@ -69,30 +91,43 @@ function ClientLogin({ onEnter }: { onEnter: (n: string) => void }) {
         <ChevronLeft size={16} /> Back
       </button>
       <User size={28} color="#C9A961" className="mb-4" />
-      <div className="font-display font-bold text-off mb-1" style={{ fontSize: 22 }}>WELCOME</div>
+      <div className="font-display font-bold text-off mb-1" style={{ fontSize: 22 }}>
+        {mode === "signup" ? "CREATE ACCOUNT" : "WELCOME BACK"}
+      </div>
       <div className="font-body mb-6 text-center" style={{ color: "#7B7B80", fontSize: 13 }}>
-        Enter your name to check in or view your progress
+        {mode === "signup" ? "Set up your account to start tracking" : "Log in to check in or view your progress"}
       </div>
       <div className="w-full max-w-xs">
+        {mode === "signup" && (
+          <div className="mb-3">
+            <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Your full name" />
+          </div>
+        )}
+        <div className="mb-3">
+          <TextInput value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" />
+        </div>
         <TextInput
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Your full name"
-          list="client-names"
-          onKeyDown={(e) => e.key === "Enter" && go()}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Password"
+          type="password"
+          onKeyDown={(e) => e.key === "Enter" && submit()}
         />
-        <datalist id="client-names">
-          {index.map((n) => (
-            <option key={n} value={n} />
-          ))}
-        </datalist>
+        {err && <div className="font-body mt-2" style={{ color: "#B4553F", fontSize: 12 }}>{err}</div>}
         <button
-          onClick={go}
+          onClick={submit}
           disabled={busy}
           className="font-display w-full mt-3 py-3 rounded bg-gold"
           style={{ color: "#12100A", fontSize: 14, letterSpacing: "0.05em", opacity: busy ? 0.6 : 1 }}
         >
-          {busy ? "..." : "CONTINUE"}
+          {busy ? "..." : mode === "signup" ? "CREATE ACCOUNT" : "LOG IN"}
+        </button>
+        <button
+          onClick={() => { setMode(mode === "signup" ? "login" : "signup"); setErr(""); }}
+          className="font-body w-full mt-3 text-center"
+          style={{ color: "#7B7B80", fontSize: 12 }}
+        >
+          {mode === "signup" ? "Already have an account? Log in" : "New here? Create an account"}
         </button>
       </div>
     </div>
@@ -117,7 +152,7 @@ function ClientShell({ name, onExit }: { name: string; onExit: () => void }) {
     <div className="min-h-screen font-body bg-bg">
       <div className="flex items-center justify-between px-5 py-4 border-b border-border">
         <button onClick={onExit} className="flex items-center gap-1" style={{ color: "#7B7B80", fontSize: 13 }}>
-          <ChevronLeft size={16} /> Exit
+          <ChevronLeft size={16} /> Log out
         </button>
         <div className="font-display" style={{ color: "#E4C878", fontSize: 13, letterSpacing: "0.1em" }}>
           {name.toUpperCase()}
@@ -230,147 +265,4 @@ function CheckinForm({ data, onSaved }: { data: ClientData; onSaved: (d: ClientD
         </Field>
       </div>
       <Field label="Supplements taken this week?" icon={Pill}>
-        <select className="bg-panelAlt border border-border text-off rounded-md px-3 py-2.5 w-full text-sm font-body" value={f.supplements} onChange={set("supplements") as any}>
-          <option value="no">No</option>
-          <option value="yes">Yes</option>
-        </select>
-      </Field>
-      {f.supplements === "yes" && (
-        <Field label="Which supplements">
-          <TextInput value={f.supplementsDetail} onChange={set("supplementsDetail")} placeholder="e.g. whey, creatine, multivitamin" />
-        </Field>
-      )}
-
-      <div className="font-body mt-2 mb-2" style={{ color: "#C9A961", fontSize: 11, letterSpacing: "0.1em" }}>HOW THIS WEEK FELT</div>
-      <Rating label="Energy" value={f.energy} onChange={(v) => setF((s) => ({ ...s, energy: v }))} />
-      <Rating label="Motivation" value={f.motivation} onChange={(v) => setF((s) => ({ ...s, motivation: v }))} />
-      <Rating label="Stress" value={f.stress} onChange={(v) => setF((s) => ({ ...s, stress: v }))} />
-      <Rating label="Hunger cravings" value={f.cravings} onChange={(v) => setF((s) => ({ ...s, cravings: v }))} />
-
-      <Field label="Wins this week" icon={Sparkles}><TextArea value={f.wins} onChange={set("wins")} placeholder="What went well?" /></Field>
-      <Field label="Challenges faced"><TextArea value={f.challenges} onChange={set("challenges")} placeholder="What was hard?" /></Field>
-      <Field label="Questions for your coach" icon={MessageSquare}><TextArea value={f.questions} onChange={set("questions")} /></Field>
-
-      <button
-        onClick={submit}
-        disabled={saving}
-        className="font-display w-full mt-2 py-3.5 rounded bg-gold"
-        style={{ color: "#12100A", fontSize: 15, letterSpacing: "0.05em", opacity: saving ? 0.6 : 1 }}
-      >
-        {saving ? "SAVING..." : "SUBMIT CHECK-IN"}
-      </button>
-    </div>
-  );
-}
-
-function ProgressView({ data }: { data: ClientData }) {
-  const rows = data.checkins.map((c, i) => ({
-    idx: i + 1,
-    date: fmtDate(c.date),
-    weight: c.weight ? Number(c.weight) : null,
-  }));
-  if (rows.length === 0) {
-    return <div className="font-body px-5 py-16 text-center" style={{ color: "#7B7B80", fontSize: 13 }}>No check-ins yet — submit your first one to start tracking.</div>;
-  }
-  const last = data.checkins[data.checkins.length - 1];
-  const prev = data.checkins[data.checkins.length - 2];
-
-  return (
-    <div className="px-5 pb-10 pt-4">
-      <div className="flex items-center justify-between mb-5">
-        <div className="font-display font-bold text-off" style={{ fontSize: 18 }}>MY PROGRESS</div>
-        <Seal streak={data.checkins.length} />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        {[
-          { label: "Weight (kg)", curr: last.weight, prev: prev?.weight },
-          { label: "Waist", curr: last.waist, prev: prev?.waist },
-        ].map((m) => (
-          <div key={m.label} className="rounded p-3 bg-panelAlt border border-border">
-            <div className="font-body uppercase" style={{ color: "#7B7B80", fontSize: 11 }}>{m.label}</div>
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className="font-display text-off" style={{ fontSize: 20 }}>{m.curr || "—"}</span>
-              <Delta curr={Number(m.curr)} prev={Number(m.prev)} invert />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="bg-panelAlt border border-border rounded-lg p-3">
-        <div className="font-body mb-2" style={{ color: "#9CA1AA", fontSize: 11, letterSpacing: "0.08em" }}>WEIGHT TREND</div>
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={rows}>
-            <CartesianGrid stroke="#2A2A2D" strokeDasharray="3 3" />
-            <XAxis dataKey="date" tick={{ fill: "#7B7B80", fontSize: 10 }} />
-            <YAxis tick={{ fill: "#7B7B80", fontSize: 10 }} domain={["auto", "auto"]} />
-            <Tooltip contentStyle={{ background: "#141416", border: "1px solid #2A2A2D", borderRadius: 6, fontSize: 12 }} labelStyle={{ color: "#F3EFE6" }} />
-            <Line type="monotone" dataKey="weight" stroke="#C9A961" strokeWidth={2} dot={{ r: 3, fill: "#C9A961" }} connectNulls />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      <div className="font-body mt-6 mb-2" style={{ color: "#C9A961", fontSize: 11, letterSpacing: "0.1em" }}>CHECK-IN HISTORY</div>
-      <div className="flex flex-col gap-2">
-        {[...data.checkins].reverse().map((c, i) => (
-          <div key={i} className="rounded p-3 flex justify-between items-center bg-panelAlt border border-border">
-            <div>
-              <div className="font-body text-off" style={{ fontSize: 13 }}>{fmtDate(c.date)}</div>
-              <div className="font-body" style={{ color: "#7B7B80", fontSize: 11 }}>
-                {c.daysCompleted || "?"}/{c.planDays || "?"} workouts &middot; {c.dietAdherence}
-              </div>
-            </div>
-            <div className="font-display" style={{ color: "#C9A961", fontSize: 14 }}>{c.weight ? `${c.weight} kg` : "—"}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function CommunityView({ index, currentName }: { index: string[]; currentName: string }) {
-  const [rows, setRows] = useState<{ name: string; count: number; wins?: string }[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      const all = await Promise.all(
-        index.map(async (n) => {
-          const d = await fetchClient(n);
-          return d ? { name: n, count: d.checkins.length, wins: d.checkins[d.checkins.length - 1]?.wins } : null;
-        })
-      );
-      setRows(all.filter((r): r is { name: string; count: number; wins: string | undefined } => !!r).sort((a, b) => b.count - a.count));
-      setLoading(false);
-    })();
-  }, [index]);
-
-  return (
-    <div className="px-5 pb-10 pt-4">
-      <div className="font-display font-bold text-off mb-1" style={{ fontSize: 18 }}>COMMUNITY</div>
-      <div className="font-body mb-5" style={{ color: "#7B7B80", fontSize: 12 }}>Everyone showing up, one week at a time.</div>
-      {loading ? (
-        <div className="font-body" style={{ color: "#7B7B80", fontSize: 13 }}>Loading...</div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {rows.map((r) => {
-            const isYou = r.name.toLowerCase() === currentName.toLowerCase();
-            return (
-              <div
-                key={r.name}
-                className="rounded p-3 flex items-center gap-3 border"
-                style={{ background: isYou ? "rgba(201,169,97,0.08)" : "#1B1B1E", borderColor: isYou ? "#C9A961" : "#2A2A2D" }}
-              >
-                <Seal streak={r.count} />
-                <div className="flex-1 min-w-0">
-                  <div className="font-body text-off" style={{ fontSize: 14 }}>{r.name}{isYou ? " (you)" : ""}</div>
-                  {r.wins && <div className="font-body truncate" style={{ color: "#7B7B80", fontSize: 11 }}>&ldquo;{r.wins}&rdquo;</div>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
+        <select className="bg-panelAlt border border-border text-off rounded-md px-3 py-2.5 w-full text-sm font-
